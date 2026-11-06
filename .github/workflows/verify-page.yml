@@ -1,0 +1,54 @@
+name: Verify training page
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PAGE_URL: https://pace33.github.io/training/
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check scripts
+        run: |
+          node --check app.js
+          node --check admin.js
+          node --check data-api.js
+      - name: Mark deployment verification pending
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=pending -f context=training-page -f description="Waiting for short URL and exact assets" -f target_url="$PAGE_URL"
+      - name: Verify published pages and shared API
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..40}; do
+            matched=true
+            for asset in index.html manage.html app.js admin.js data-api.js style.css; do
+              public_path="$asset"
+              if [ "$asset" = index.html ]; then public_path=""; fi
+              if ! curl -fsSL --max-time 15 "${PAGE_URL}${public_path}?sha=$GITHUB_SHA" -o "/tmp/training-$asset" ||
+                 ! cmp -s "$asset" "/tmp/training-$asset"; then matched=false; break; fi
+            done
+            if [ "$matched" = true ]; then break; fi
+            if [ "$attempt" = 40 ]; then exit 1; fi
+            sleep 10
+          done
+          grep -Fq 'https://aiedue.ddns.net/db-pic8/api' /tmp/training-data-api.js
+          ! grep -Fq 'chatgpt.site' /tmp/training-data-api.js
+          grep -Fq '연수 참가 신청을 받고 있습니다.' /tmp/training-app.js
+          curl -fsSL --max-time 30 -D /tmp/training-headers -H 'Origin: https://pace33.github.io' https://aiedue.ddns.net/db-pic8/api/registrations -o /tmp/training-status.json
+          grep -iq 'access-control-allow-origin: https://pace33.github.io' /tmp/training-headers
+          python3 -c "import json; d=json.load(open('/tmp/training-status.json')); assert d['participants']==[] and d['count'] is None and d['capacity']==20 and d['readyForCutover'] is True"
+      - name: Report result
+        if: always()
+        env:
+          VERIFY_RESULT: ${{ job.status }}
+        run: |
+          state=failure
+          if [ "$VERIFY_RESULT" = success ]; then state=success; fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=training-page -f description="Short URL and shared API: $state" -f target_url="$PAGE_URL"
