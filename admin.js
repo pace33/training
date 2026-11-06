@@ -14,7 +14,7 @@ async function callApi(path,options={}){
   const r=await fetch(base+path,{...options,headers,cache:'no-store'});
   let d;
   try{d=await r.json();}catch{throw Error('서버 응답을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.');}
-  if(r.status===401&&path!=='/admin/login'){
+  if(r.status===401&&!['/admin/login','/admin/password'].includes(path)){
     resetLogin('로그인 시간이 만료되었습니다. 비밀번호로 다시 로그인해 주세요.');
     throw Error('관리자 로그인이 필요합니다.');
   }
@@ -28,6 +28,44 @@ async function saveSelection(id,selected){if(saving||!token)return;if(loading){r
 byId('admin-login-form').addEventListener('submit',async e=>{e.preventDefault();const button=byId('login-button');button.disabled=true;button.textContent='확인 중…';showMessage('login-message','');try{const d=await callApi('/admin/login',{method:'POST',body:JSON.stringify({password:byId('admin-password').value})});token=d.accessToken;byId('admin-password').value='';byId('login-panel').hidden=true;byId('management-panel').hidden=false;showMessage('management-message','');await refresh();}catch(e){showMessage('login-message',e.message);}finally{button.disabled=false;button.textContent='관리자 메뉴 들어가기 →';}});
 byId('logout-button').addEventListener('click',async()=>{try{await callApi('/admin/login',{method:'DELETE'});}catch{}finally{resetLogin();}});
 byId('refresh-button').addEventListener('click',()=>{showMessage('management-message','');refresh();});byId('applicant-search').addEventListener('input',render);byId('selected-only').addEventListener('change',render);
+const passwordDialog=byId('password-dialog');
+let changingPassword=false;
+const passwordFields=['password-current','password-new','password-confirm'];
+function clearPasswordFields(){for(const id of passwordFields)byId(id).value='';}
+for(const entry of document.querySelectorAll('[data-password-change]'))entry.addEventListener('click',()=>{
+  if(saving||loading||changingPassword)return;
+  clearPasswordFields();showMessage('password-message','');passwordDialog.showModal();byId('password-current').focus();
+});
+byId('password-cancel').addEventListener('click',()=>passwordDialog.close());
+passwordDialog.addEventListener('cancel',e=>{if(changingPassword)e.preventDefault();});
+passwordDialog.addEventListener('close',()=>{clearPasswordFields();showMessage('password-message','');});
+byId('password-change-form').addEventListener('submit',async e=>{
+  e.preventDefault();if(changingPassword)return;
+  const currentPassword=byId('password-current').value,newPassword=byId('password-new').value,confirmPassword=byId('password-confirm').value;
+  const {minimum,maximum}=window.Pic8Api.passwordPolicy;
+  // JS code points, not UTF-16 code units: identical to Python len(). Never trim.
+  let error='';
+  if(!currentPassword)error='현재 비밀번호를 입력해 주세요.';
+  else if([...currentPassword].length>maximum)error='현재 비밀번호는 1024자 이하여야 합니다.';
+  else if(!newPassword)error='새 비밀번호를 입력해 주세요.';
+  else if([...newPassword].length<minimum||[...newPassword].length>maximum)error='새 비밀번호는 4~1024자여야 합니다.';
+  else if(newPassword!==confirmPassword)error='새 비밀번호와 확인 입력이 일치하지 않습니다.';
+  if(error){showMessage('password-message',error);return;}
+  changingPassword=true;
+  const controls=[...byId('password-change-form').querySelectorAll('input,button')];for(const control of controls)control.disabled=true;
+  byId('password-submit').textContent='변경 중…';showMessage('password-message','');
+  try{
+    await callApi('/admin/password',{method:'POST',body:JSON.stringify({currentPassword,newPassword,confirmPassword})});
+    passwordDialog.close();resetLogin();
+    showMessage('login-message','공통 관리자 비밀번호가 변경되었습니다. 연수·메인 자료실의 기존 로그인이 모두 종료되었습니다. 새 비밀번호로 다시 로그인해 주세요.','success');
+  }catch(e){
+    clearPasswordFields();
+    showMessage('password-message',e instanceof TypeError?'응답을 확인하지 못했습니다. 변경되었을 수 있으니 새 비밀번호로 로그인을 확인해 주세요. 자동으로 다시 요청하지 않습니다.':e.message);
+  }finally{
+    changingPassword=false;for(const control of controls)control.disabled=false;byId('password-submit').textContent='비밀번호 변경';
+    if(passwordDialog.open)byId('password-current').focus();
+  }
+});
 setInterval(()=>refresh(),20000);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')refresh();});
 
 function openDelete(person){if(!token||saving||loading)return;const dialog=byId('delete-dialog');if(!dialog){showMessage('management-message','페이지를 새로고침한 뒤 다시 진행해 주세요.');return;}pendingDelete=person;byId('delete-target').textContent=person.region+' · '+person.school+' · '+person.full_name;dialog.showModal();}
