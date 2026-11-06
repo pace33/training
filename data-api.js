@@ -6,5 +6,6 @@
   const resolved = Promise.resolve(primary);
   // Never select another server, probe legacy health, or replay a failed mutation.
   // The registration status response controls availability, not backend selection.
-  window.Pic8Api = Object.freeze({primary, state, resolve: () => resolved});
+  window.Pic8Api = Object.freeze({primary, state, resolve: () => resolved,
+    passwordPolicy: Object.freeze({minimum: 4, maximum: 1024})});
 })();
